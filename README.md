@@ -1,6 +1,6 @@
 # rbtset
 
-[![crates.io](https://meritbadge.herokuapp.com/rbtset)](https://crates.io/crates/rbtset) ![rbtset](https://docs.rs/rbtset/badge.svg)
+[![crates.io](https://meritbadge.herokuapp.com/rbtset)](https://crates.io/crates/rbtset) [![rbtset docs](https://docs.rs/rbtset/badge.svg)](https://docs.rs/rbtset)
 
 A set based on a RB-Tree for efficient operations.
 
