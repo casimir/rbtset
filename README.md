@@ -13,4 +13,4 @@ A set based on a RB-Tree for efficient operations.
 
 ## Details
 
-See the documentation for more details and examples: https://docs.rs/rbtset
+See the documentation for more details and examples: https://docs.rs/rbtset/latest/rbtset/struct.RBTreeSet.html
