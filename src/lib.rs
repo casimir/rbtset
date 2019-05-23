@@ -1,4 +1,8 @@
 //! A set based on a RB-Tree for efficient operations.
+//!
+//! All details and examples can be found in the [main struct documentation].
+//!
+//! [main struct documentation]: struct.RBTreeSet.html
 
 mod node;
 mod tree;
