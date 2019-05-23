@@ -1,6 +1,6 @@
 [package]
 name = "rbtset"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Martin Chaine <martin@casimir.me>"]
 edition = "2018"
 description = "A set based on a RB-Tree for efficient operations."
