@@ -234,7 +234,8 @@ impl<T: Ord> RBTreeSet<T> {
     /// ```
     pub fn insert(&mut self, data: T) -> Option<Node<T>> {
         let node = if let Some(ref root) = self.root {
-            self.insert_from(root.duplicate(), data)
+            let dup = root.duplicate();
+            self.insert_from(dup, data)
         } else {
             self.root = Some(Node::from(data));
             Some(self.root.as_ref().unwrap().duplicate())
