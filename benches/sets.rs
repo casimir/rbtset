@@ -1,7 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
-use criterion::{criterion_group, criterion_main, BatchSize, Criterion, ParameterizedBenchmark};
-use lazy_static::lazy_static;
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::Rng;
 
 use rbtset::RBTreeSet;
@@ -12,20 +11,12 @@ fn make_data(size: usize) -> Vec<i64> {
     let high = size as i64;
     let mut data = Vec::with_capacity(size);
     for _ in 0..size {
-        data.push(rng.gen_range(low, high));
+        data.push(rng.gen_range(low..high));
     }
     data
 }
 
-lazy_static! {
-    static ref DATAS: BTreeMap<usize, Vec<i64>> = {
-        let mut datas = BTreeMap::new();
-        for i in &[10, 100, 500, 1_000] {
-            datas.insert(*i, make_data(*i));
-        }
-        datas
-    };
-}
+const SAMPLE_SIZES: &[usize] = &[10, 100, 500, 1_000];
 
 fn sv_insert(sv: &mut Vec<i64>, data: &[i64]) {
     for v in data {
@@ -83,105 +74,102 @@ fn rbt_delete(rbt: &mut RBTreeSet<i64>, values: &[i64]) {
     }
 }
 
-fn loads_of_values(c: &mut Criterion) {
-    c.bench(
-        "insert",
-        ParameterizedBenchmark::new(
-            "sorted vec",
-            |b, s| {
-                let mut sv = Vec::new();
-                b.iter(|| sv_insert(&mut sv, &DATAS[s]));
-            },
-            DATAS.keys().map(|k| *k).collect::<Vec<usize>>(),
-        )
-        .with_function("btree set", |b, s| {
+fn op_insert(c: &mut Criterion) {
+    let mut group = c.benchmark_group("insert");
+    for size in SAMPLE_SIZES {
+        let data = make_data(*size);
+        group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
+            let mut sv = Vec::new();
+            b.iter(|| sv_insert(&mut sv, d));
+        });
+        group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
             let mut bts = BTreeSet::new();
-            b.iter(|| bts_insert(&mut bts, &DATAS[s]));
-        })
-        .with_function("rbtree", |b, s| {
+            b.iter(|| bts_insert(&mut bts, d));
+        });
+        group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
             let mut rbt = RBTreeSet::new();
-            b.iter(|| rbt_insert(&mut rbt, &DATAS[s]));
-        }),
-    );
-    c.bench(
-        "contains",
-        ParameterizedBenchmark::new(
-            "sorted vec",
-            |b, s| {
-                let mut sv = Vec::new();
-                sv_insert(&mut sv, &DATAS[s]);
-                b.iter(|| sv_contains(&sv, &DATAS[s][..5]));
-            },
-            DATAS.keys().map(|k| *k).collect::<Vec<usize>>(),
-        )
-        .with_function("btree set", |b, s| {
-            let mut bts = BTreeSet::new();
-            bts_insert(&mut bts, &DATAS[s]);
-            b.iter(|| bts_contains(&bts, &DATAS[s][..5]));
-        })
-        .with_function("rbtree", |b, s| {
-            let mut rbt = RBTreeSet::new();
-            rbt_insert(&mut rbt, &DATAS[s]);
-            b.iter(|| rbt_contains(&rbt, &DATAS[s][..5]));
-        }),
-    );
-    c.bench(
-        "clone",
-        ParameterizedBenchmark::new(
-            "sorted vec",
-            |b, s| {
-                let mut sv = Vec::new();
-                sv_insert(&mut sv, &DATAS[s]);
-                b.iter(|| sv.clone());
-            },
-            DATAS.keys().map(|k| *k).collect::<Vec<usize>>(),
-        )
-        .with_function("btree set", |b, s| {
-            let mut bts = BTreeSet::new();
-            bts_insert(&mut bts, &DATAS[s]);
-            b.iter(|| bts.clone());
-        })
-        .with_function("rbtree", |b, s| {
-            let mut rbt = RBTreeSet::new();
-            rbt_insert(&mut rbt, &DATAS[s]);
-            b.iter(|| rbt.clone());
-        }),
-    );
-    c.bench(
-        "delete",
-        ParameterizedBenchmark::new(
-            "sorted vec",
-            |b, s| {
-                let mut sv = Vec::new();
-                sv_insert(&mut sv, &DATAS[s]);
-                b.iter_batched_ref(
-                    || sv.clone(),
-                    |sv| sv_delete(sv, &DATAS[s][5..10]),
-                    BatchSize::SmallInput,
-                );
-            },
-            DATAS.keys().map(|k| *k).collect::<Vec<usize>>(),
-        )
-        .with_function("btree set", |b, s| {
-            let mut bts = BTreeSet::new();
-            bts_insert(&mut bts, &DATAS[s]);
-            b.iter_batched_ref(
-                || bts.clone(),
-                |bts| bts_delete(bts, &DATAS[s][5..10]),
-                BatchSize::SmallInput,
-            );
-        })
-        .with_function("rbtree", |b, s| {
-            let mut rbt = RBTreeSet::new();
-            rbt_insert(&mut rbt, &DATAS[s]);
-            b.iter_batched_ref(
-                || rbt.clone(),
-                |rbt| rbt_delete(rbt, &DATAS[s][5..10]),
-                BatchSize::SmallInput,
-            );
-        }),
-    );
+            b.iter(|| rbt_insert(&mut rbt, &d));
+        });
+    }
 }
 
-criterion_group!(benches, loads_of_values);
+fn op_contains(c: &mut Criterion) {
+    let mut group = c.benchmark_group("contains");
+    for size in SAMPLE_SIZES {
+        let data = make_data(*size);
+        group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
+            let mut sv = Vec::new();
+            sv_insert(&mut sv, d);
+            b.iter(|| sv_contains(&mut sv, &d[..5]));
+        });
+        group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
+            let mut bts = BTreeSet::new();
+            bts_insert(&mut bts, d);
+            b.iter(|| bts_contains(&mut bts, &d[..5]));
+        });
+        group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
+            let mut rbt = RBTreeSet::new();
+            rbt_insert(&mut rbt, d);
+            b.iter(|| rbt_contains(&mut rbt, &d[..5]));
+        });
+    }
+}
+
+fn op_clone(c: &mut Criterion) {
+    let mut group = c.benchmark_group("clone");
+    for size in SAMPLE_SIZES {
+        let data = make_data(*size);
+        group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
+            let mut sv = Vec::new();
+            sv_insert(&mut sv, d);
+            b.iter(|| sv.clone());
+        });
+        group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
+            let mut bts = BTreeSet::new();
+            bts_insert(&mut bts, d);
+            b.iter(|| bts.clone());
+        });
+        group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
+            let mut rbt = RBTreeSet::new();
+            rbt_insert(&mut rbt, d);
+            b.iter(|| rbt.clone());
+        });
+    }
+}
+
+fn op_delete(c: &mut Criterion) {
+    let mut group = c.benchmark_group("delete");
+    for size in SAMPLE_SIZES {
+        let data = make_data(*size);
+        group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
+            let mut sv = Vec::new();
+            sv_insert(&mut sv, d);
+            b.iter_batched_ref(
+                || sv.clone(),
+                |sv| sv_delete(sv, &d[5..10]),
+                BatchSize::SmallInput,
+            );
+        });
+        group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
+            let mut bts = BTreeSet::new();
+            bts_insert(&mut bts, d);
+            b.iter_batched_ref(
+                || bts.clone(),
+                |bts| bts_delete(bts, &d[5..10]),
+                BatchSize::SmallInput,
+            );
+        });
+        group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
+            let mut rbt = RBTreeSet::new();
+            rbt_insert(&mut rbt, d);
+            b.iter_batched_ref(
+                || rbt.clone(),
+                |rbt| rbt_delete(rbt, &d[5..10]),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+}
+
+criterion_group!(benches, op_insert, op_contains, op_clone, op_delete);
 criterion_main!(benches);
