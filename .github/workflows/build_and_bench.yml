@@ -16,8 +16,6 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macOS-latest]
-    env:
-      CRITERION_TOKEN: ${{ secrets.CRITERION_TOKEN }}
 
     steps:
     - uses: actions/checkout@v2
@@ -25,7 +23,20 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+  
+  benchmarks:
+
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+  
+    steps:
+    - uses: actions/checkout@v2
     - name: Run benchmarks
-      run: cargo bench -- --verbose
+      run: cargo bench --bench sets -- --verbose
     - name: Upload benchmarks
+      env:
+        CRITERION_TOKEN: ${{ secrets.CRITERION_TOKEN }}
       run: bash <(curl -s https://criterion.dev/bash)
