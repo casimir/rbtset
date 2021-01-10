@@ -120,19 +120,46 @@ fn op_clone(c: &mut Criterion) {
     for size in SAMPLE_SIZES {
         let data = make_data(*size);
         group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
-            let mut sv = Vec::new();
-            sv_insert(&mut sv, d);
-            b.iter(|| sv.clone());
+            b.iter_batched(
+                || {
+                    let mut sv = Vec::new();
+                    sv_insert(&mut sv, d);
+                    sv
+                },
+                |sv| {
+                    let cloned = sv.clone();
+                    cloned
+                },
+                BatchSize::LargeInput,
+            );
         });
         group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
-            let mut bts = BTreeSet::new();
-            bts_insert(&mut bts, d);
-            b.iter(|| bts.clone());
+            b.iter_batched(
+                || {
+                    let mut bts = BTreeSet::new();
+                    bts_insert(&mut bts, d);
+                    bts
+                },
+                |bts| {
+                    let cloned = bts.clone();
+                    cloned
+                },
+                BatchSize::LargeInput,
+            );
         });
         group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
-            let mut rbt = RBTreeSet::new();
-            rbt_insert(&mut rbt, d);
-            b.iter(|| rbt.clone());
+            b.iter_batched(
+                || {
+                    let mut rbt = RBTreeSet::new();
+                    rbt_insert(&mut rbt, d);
+                    rbt
+                },
+                |rbt| {
+                    let cloned = rbt.clone();
+                    cloned
+                },
+                BatchSize::LargeInput,
+            );
         });
     }
 }
@@ -147,7 +174,7 @@ fn op_delete(c: &mut Criterion) {
             b.iter_batched_ref(
                 || sv.clone(),
                 |sv| sv_delete(sv, &d[5..10]),
-                BatchSize::SmallInput,
+                BatchSize::LargeInput,
             );
         });
         group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
@@ -156,7 +183,7 @@ fn op_delete(c: &mut Criterion) {
             b.iter_batched_ref(
                 || bts.clone(),
                 |bts| bts_delete(bts, &d[5..10]),
-                BatchSize::SmallInput,
+                BatchSize::LargeInput,
             );
         });
         group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
@@ -165,11 +192,12 @@ fn op_delete(c: &mut Criterion) {
             b.iter_batched_ref(
                 || rbt.clone(),
                 |rbt| rbt_delete(rbt, &d[5..10]),
-                BatchSize::SmallInput,
+                BatchSize::LargeInput,
             );
         });
     }
 }
 
-criterion_group!(benches, op_insert, op_contains, op_clone, op_delete);
+// criterion_group!(benches, op_insert, op_contains, op_clone, op_delete);
+criterion_group!(benches, op_insert, op_contains);
 criterion_main!(benches);
