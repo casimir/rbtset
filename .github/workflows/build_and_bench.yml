@@ -39,4 +39,4 @@ jobs:
     - name: Upload benchmarks
       env:
         CRITERION_TOKEN: ${{ secrets.CRITERION_TOKEN }}
-      run: bash <(curl -s https://criterion.dev/bash)
+      run: curl -s https://criterion.dev/bash | bash
