@@ -1,7 +1,9 @@
-use std::cell::{Ref, RefCell};
-use std::fmt;
-use std::ops::Deref;
-use std::rc::Rc;
+use std::{
+    cell::{Ref, RefCell},
+    fmt,
+    ops::Deref,
+    rc::{Rc, Weak},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Colour {
@@ -21,7 +23,7 @@ impl fmt::Display for Colour {
 
 struct NodeData<T> {
     colour: Colour,
-    parent: Option<Node<T>>,
+    parent: Option<ParentNode<T>>,
     left: Option<Node<T>>,
     right: Option<Node<T>>,
     pub(crate) data: T,
@@ -38,6 +40,8 @@ impl<T> NodeData<T> {
         }
     }
 }
+
+struct ParentNode<T>(Weak<RefCell<NodeData<T>>>);
 
 /// Type of the tree elements containing the actuel data.
 pub struct Node<T>(Rc<RefCell<NodeData<T>>>);
@@ -64,14 +68,14 @@ impl<T> Node<T> {
     }
 
     pub(crate) fn parent(&self) -> Option<Node<T>> {
-        self.0.borrow().parent.as_ref().map(Node::duplicate)
+        Some(Node(self.0.borrow().parent.as_ref()?.0.upgrade()?))
     }
 
     pub(crate) fn set_parent<I>(&mut self, node: I)
     where
         I: Into<Option<Node<T>>>,
     {
-        self.0.borrow_mut().parent = node.into()
+        self.0.borrow_mut().parent = node.into().map(|n| ParentNode(Rc::downgrade(&n.0)))
     }
 
     pub(crate) fn left(&self) -> Option<Node<T>> {
