@@ -9,6 +9,10 @@ readme = "README.md"
 keywords = ["data-structure", "rbtree", "tree", "set"]
 categories = ["data-structures"]
 license = "MIT"
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+]
 
 [dependencies]
 
