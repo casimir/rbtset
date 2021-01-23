@@ -16,7 +16,7 @@ fn make_data(size: usize) -> Vec<i64> {
     data
 }
 
-const SAMPLE_SIZES: &[usize] = &[10, 100, 500, 1_000];
+const SAMPLE_SIZES: &[usize] = &[5, 10, 100, 500, 1_000];
 
 fn sv_insert(sv: &mut Vec<i64>, data: &[i64]) {
     for v in data {
@@ -78,10 +78,12 @@ fn op_insert(c: &mut Criterion) {
     let mut group = c.benchmark_group("insert");
     for size in SAMPLE_SIZES {
         let data = make_data(*size);
-        group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
-            let mut sv = Vec::new();
-            b.iter(|| sv_insert(&mut sv, d));
-        });
+        if *size < 500 {
+            group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
+                let mut sv = Vec::new();
+                b.iter(|| sv_insert(&mut sv, d));
+            });
+        }
         group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
             let mut bts = BTreeSet::new();
             b.iter(|| bts_insert(&mut bts, d));
@@ -173,7 +175,7 @@ fn op_delete(c: &mut Criterion) {
             sv_insert(&mut sv, d);
             b.iter_batched_ref(
                 || sv.clone(),
-                |sv| sv_delete(sv, &d[5..10]),
+                |sv| sv_delete(sv, &d[1..5]),
                 BatchSize::LargeInput,
             );
         });
@@ -182,7 +184,7 @@ fn op_delete(c: &mut Criterion) {
             bts_insert(&mut bts, d);
             b.iter_batched_ref(
                 || bts.clone(),
-                |bts| bts_delete(bts, &d[5..10]),
+                |bts| bts_delete(bts, &d[1..5]),
                 BatchSize::LargeInput,
             );
         });
@@ -191,7 +193,7 @@ fn op_delete(c: &mut Criterion) {
             rbt_insert(&mut rbt, d);
             b.iter_batched_ref(
                 || rbt.clone(),
-                |rbt| rbt_delete(rbt, &d[5..10]),
+                |rbt| rbt_delete(rbt, &d[1..5]),
                 BatchSize::LargeInput,
             );
         });
