@@ -17,7 +17,7 @@ include = [
 [dependencies]
 
 [dev-dependencies]
-criterion = "0.3"
+criterion = "0.5"
 rand = "0.8"
 
 [[bench]]
