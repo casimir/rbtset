@@ -1,9 +1,10 @@
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use rand::Rng;
 
-use rbtset::RBTreeSet;
+use rbtset::{Consecutive, RBTreeSet};
 
 fn make_data(size: usize) -> Vec<i64> {
     let mut rng = rand::thread_rng();
@@ -33,8 +34,9 @@ fn sv_contains(sv: &Vec<i64>, values: &[i64]) {
 
 fn sv_delete(sv: &mut Vec<i64>, values: &[i64]) {
     for value in values {
-        let index = sv.iter().position(|x| x == value).unwrap();
-        sv.remove(index);
+        if let Some(index) = sv.iter().position(|x| x == value) {
+            sv.remove(index);
+        }
     }
 }
 
@@ -80,17 +82,26 @@ fn op_insert(c: &mut Criterion) {
         let data = make_data(*size);
         if *size < 500 {
             group.bench_with_input(BenchmarkId::new("sorted vec", size), &data, |b, d| {
-                let mut sv = Vec::new();
-                b.iter(|| sv_insert(&mut sv, d));
+                b.iter_batched(
+                    Vec::new,
+                    |mut sv| sv_insert(&mut sv, d),
+                    BatchSize::SmallInput,
+                );
             });
         }
         group.bench_with_input(BenchmarkId::new("btree set", size), &data, |b, d| {
-            let mut bts = BTreeSet::new();
-            b.iter(|| bts_insert(&mut bts, d));
+            b.iter_batched(
+                BTreeSet::new,
+                |mut bts| bts_insert(&mut bts, d),
+                BatchSize::SmallInput,
+            );
         });
         group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
-            let mut rbt = RBTreeSet::new();
-            b.iter(|| rbt_insert(&mut rbt, &d));
+            b.iter_batched(
+                RBTreeSet::new,
+                |mut rbt| rbt_insert(&mut rbt, d),
+                BatchSize::SmallInput,
+            );
         });
     }
 }
@@ -128,10 +139,7 @@ fn op_clone(c: &mut Criterion) {
                     sv_insert(&mut sv, d);
                     sv
                 },
-                |sv| {
-                    let cloned = sv.clone();
-                    cloned
-                },
+                |sv| sv.clone(),
                 BatchSize::SmallInput,
             );
         });
@@ -142,10 +150,7 @@ fn op_clone(c: &mut Criterion) {
                     bts_insert(&mut bts, d);
                     bts
                 },
-                |bts| {
-                    let cloned = bts.clone();
-                    cloned
-                },
+                |bts| bts.clone(),
                 BatchSize::SmallInput,
             );
         });
@@ -156,11 +161,8 @@ fn op_clone(c: &mut Criterion) {
                     rbt_insert(&mut rbt, d);
                     rbt
                 },
-                |rbt| {
-                    let cloned = rbt.clone();
-                    cloned
-                },
-                BatchSize::LargeInput,
+                |rbt| rbt.clone(),
+                BatchSize::SmallInput,
             );
         });
     }
@@ -200,5 +202,67 @@ fn op_delete(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, op_insert, op_contains, op_clone, op_delete);
+// Seq wraps a Range so consecutive ranges can be stored and merged via repack.
+#[derive(Debug, Clone, Eq)]
+struct Seq(Range<i64>);
+
+impl PartialEq for Seq {
+    fn eq(&self, other: &Seq) -> bool {
+        other.0.start <= self.0.start && self.0.start < other.0.end
+    }
+}
+
+impl Ord for Seq {
+    fn cmp(&self, other: &Seq) -> std::cmp::Ordering {
+        self.0.start.cmp(&other.0.start)
+    }
+}
+
+impl PartialOrd for Seq {
+    fn partial_cmp(&self, other: &Seq) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Consecutive for Seq {
+    fn consecutive(&self, other: &Seq) -> bool {
+        self.0.end == other.0.start
+    }
+
+    fn merged(&self, other: &Seq) -> Seq {
+        Seq(self.0.start..other.0.end)
+    }
+}
+
+fn make_seq_data(size: usize) -> Vec<Seq> {
+    // Build a mix of consecutive and non-consecutive unit ranges so repack has real work.
+    let mut rng = rand::thread_rng();
+    let mut starts: Vec<i64> = (0..size as i64).collect();
+    // Shuffle to randomise insertion order; repack merges them into longer runs.
+    use rand::seq::SliceRandom;
+    starts.shuffle(&mut rng);
+    starts.iter().map(|&s| Seq(s..s + 1)).collect()
+}
+
+fn op_repack(c: &mut Criterion) {
+    let mut group = c.benchmark_group("repack");
+    for size in SAMPLE_SIZES {
+        let data = make_seq_data(*size);
+        group.bench_with_input(BenchmarkId::new("rbtree set", size), &data, |b, d| {
+            b.iter_batched(
+                || {
+                    let mut rbt = RBTreeSet::new();
+                    for seq in d {
+                        rbt.insert(seq.clone());
+                    }
+                    rbt
+                },
+                |mut rbt| rbt.repack(),
+                BatchSize::SmallInput,
+            );
+        });
+    }
+}
+
+criterion_group!(benches, op_insert, op_contains, op_clone, op_delete, op_repack);
 criterion_main!(benches);
