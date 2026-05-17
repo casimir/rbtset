@@ -132,12 +132,12 @@ impl<T> Node<T> {
 
 impl<T: Ord> Node<T> {
     pub(crate) fn is_left_child(&self) -> bool {
-        self.parent()
-            .as_ref()
-            .and_then(Node::left)
-            .as_ref()
-            .map(|n| n == self)
-            .unwrap_or(false)
+        self.parent().map_or(false, |p| {
+            p.0.borrow()
+                .left
+                .as_ref()
+                .map_or(false, |l| Rc::ptr_eq(&l.0, &self.0))
+        })
     }
 
     pub(crate) fn sibling(&self) -> Option<Node<T>> {

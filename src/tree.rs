@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::iter::FromIterator;
 
@@ -99,24 +100,27 @@ impl<T: Ord> RBTreeSet<T> {
     }
 
     fn insert_from(&mut self, mut root: Node<T>, data: T) -> Option<Node<T>> {
-        if data == *root.data() {
-            None
-        } else if data <= *root.data() {
-            if root.left().is_none() {
-                let mut node = Node::from(data);
-                node.set_parent(root.duplicate());
-                root.set_left(node.duplicate());
-                Some(node)
-            } else {
-                self.insert_from(root.left().as_ref().unwrap().duplicate(), data)
-            }
-        } else if root.right().is_none() {
-            let mut node = Node::from(data);
-            node.set_parent(root.duplicate());
-            root.set_right(node.duplicate());
-            Some(node)
-        } else {
-            self.insert_from(root.right().as_ref().unwrap().duplicate(), data)
+        let ord = data.cmp(&*root.data());
+        match ord {
+            Ordering::Equal => None,
+            Ordering::Less => match root.left() {
+                None => {
+                    let mut node = Node::from(data);
+                    node.set_parent(root.duplicate());
+                    root.set_left(node.duplicate());
+                    Some(node)
+                }
+                Some(left) => self.insert_from(left, data),
+            },
+            Ordering::Greater => match root.right() {
+                None => {
+                    let mut node = Node::from(data);
+                    node.set_parent(root.duplicate());
+                    root.set_right(node.duplicate());
+                    Some(node)
+                }
+                Some(right) => self.insert_from(right, data),
+            },
         }
     }
 
@@ -161,51 +165,41 @@ impl<T: Ord> RBTreeSet<T> {
     }
 
     fn balance(&mut self, mut node: Node<T>) {
-        if node.parent().is_none() {
-            node.set_colour(Colour::Black);
-        } else if node.parent().as_ref().map(Node::colour) == Some(Colour::Black) {
-            // we're good here
-        } else if node.uncle().as_ref().map(Node::colour) == Some(Colour::Red) {
-            // parent colour <- black
-            node.parent().as_mut().unwrap().set_colour(Colour::Black);
-            // uncle colour <- black
-            node.uncle().as_mut().unwrap().set_colour(Colour::Black);
-            // grand parent colour <- red
-            let mut grand_parent = node.parent().as_ref().and_then(Node::parent).unwrap();
+        let mut parent = match node.parent() {
+            None => {
+                node.set_colour(Colour::Black);
+                return;
+            }
+            Some(p) => p,
+        };
+
+        if parent.colour() == Colour::Black {
+            return;
+        }
+
+        let mut uncle = node.uncle();
+        if uncle.as_ref().map(Node::colour) == Some(Colour::Red) {
+            parent.set_colour(Colour::Black);
+            uncle.as_mut().unwrap().set_colour(Colour::Black);
+            let mut grand_parent = parent.parent().unwrap();
             grand_parent.set_colour(Colour::Red);
-            // balance from grand parent
             self.balance(grand_parent.duplicate());
         } else {
-            let parent = node.parent().as_ref().map(Node::duplicate).unwrap();
             let mut new_node = node.duplicate();
 
-            // rotate as needed
             let parent_is_left = parent.is_left_child();
             let node_is_left = node.is_left_child();
             if parent_is_left && !node_is_left {
-                self.rotate_left(node.parent().as_ref().unwrap().duplicate());
-                new_node = node.left().as_ref().unwrap().duplicate();
+                self.rotate_left(parent.duplicate());
+                new_node = node.left().unwrap();
             } else if !parent_is_left && node_is_left {
-                self.rotate_right(node.parent().as_ref().unwrap().duplicate());
-                new_node = node.right().as_ref().unwrap().duplicate();
+                self.rotate_right(parent.duplicate());
+                new_node = node.right().unwrap();
             }
 
-            let mut new_gparent = new_node
-                .parent()
-                .as_ref()
-                .unwrap()
-                .parent()
-                .as_ref()
-                .map(Node::duplicate)
-                .unwrap();
-
-            // swap parent and grand parent colours
-            new_node
-                .parent()
-                .as_ref()
-                .map(Node::duplicate)
-                .unwrap()
-                .set_colour(Colour::Black);
+            let mut new_parent = new_node.parent().unwrap();
+            let mut new_gparent = new_parent.parent().unwrap();
+            new_parent.set_colour(Colour::Black);
             new_gparent.set_colour(Colour::Red);
 
             if new_node.is_left_child() {
@@ -303,14 +297,13 @@ impl<T: Ord> RBTreeSet<T> {
     /// ```
     pub fn get_node(&self, data: &T) -> Option<Node<T>> {
         let mut tmp = self.root.as_ref().map(Node::duplicate);
-        while let Some(ref n) = tmp {
-            if *data == *n.data() {
-                return Some(n.duplicate());
-            } else if *data < *n.data() {
-                tmp = n.left();
-            } else {
-                tmp = n.right();
-            }
+        while let Some(n) = tmp {
+            let ord = data.cmp(&*n.data());
+            tmp = match ord {
+                Ordering::Equal => return Some(n.duplicate()),
+                Ordering::Less => n.left(),
+                Ordering::Greater => n.right(),
+            };
         }
         None
     }
