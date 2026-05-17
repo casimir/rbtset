@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
 use std::fmt;
 use std::iter::FromIterator;
+use std::rc::Rc;
 
-use crate::node::{Colour, Node};
+use crate::node::{Arena, Colour, Node, NodeData, NULL};
 use crate::Consecutive;
 
 /// A set based on a RB-Tree for efficient operations.
@@ -61,19 +62,57 @@ use crate::Consecutive;
 ///     println!("{}", number);
 /// }
 /// ```
-#[derive(Default)]
 pub struct RBTreeSet<T> {
-    root: Option<Node<T>>,
+    arena: Arena<T>,
+    free: Vec<u32>,
+    root: u32,
     length: usize,
+}
+
+impl<T: Ord> Default for RBTreeSet<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Ord> RBTreeSet<T> {
     /// Makes a new `RBTreeSet`.
     pub fn new() -> RBTreeSet<T> {
         RBTreeSet {
-            root: None,
+            arena: Rc::new(std::cell::RefCell::new(Vec::new())),
+            free: Vec::new(),
+            root: NULL,
             length: 0,
         }
+    }
+
+    fn node_opt(&self, idx: u32) -> Option<Node<T>> {
+        if idx == NULL { None } else { Some(Node::new(Rc::clone(&self.arena), idx)) }
+    }
+
+    fn alloc_node(&mut self, data: T) -> Node<T> {
+        let idx = if let Some(idx) = self.free.pop() {
+            self.arena.borrow_mut()[idx as usize] = NodeData::new(data);
+            idx
+        } else {
+            let mut arena = self.arena.borrow_mut();
+            let idx = arena.len() as u32;
+            arena.push(NodeData::new(data));
+            idx
+        };
+        Node::new(Rc::clone(&self.arena), idx)
+    }
+
+    fn free_node(&mut self, idx: u32) {
+        {
+            let mut arena = self.arena.borrow_mut();
+            let nd = &mut arena[idx as usize];
+            nd.data = None;
+            nd.left = NULL;
+            nd.right = NULL;
+            nd.parent = NULL;
+        }
+        self.free.push(idx);
     }
 
     /// Returns the value in the set, if any, that is matching the given value.
@@ -99,47 +138,54 @@ impl<T: Ord> RBTreeSet<T> {
         self.get_node(data).as_ref().map(|n| n.clone_data())
     }
 
-    fn insert_from(&mut self, mut root: Node<T>, data: T) -> Option<Node<T>> {
-        let ord = data.cmp(&*root.data());
+    fn insert_from(&mut self, root_idx: u32, data: T) -> Option<Node<T>> {
+        let ord = {
+            let arena = self.arena.borrow();
+            data.cmp(arena[root_idx as usize].data.as_ref().unwrap())
+        };
         match ord {
             Ordering::Equal => None,
-            Ordering::Less => match root.left() {
-                None => {
-                    let mut node = Node::from(data);
-                    node.set_parent(root.duplicate());
-                    root.set_left(node.duplicate());
+            Ordering::Less => {
+                let left_idx = self.arena.borrow()[root_idx as usize].left;
+                if left_idx == NULL {
+                    let mut node = self.alloc_node(data);
+                    node.set_parent(Node::new(Rc::clone(&self.arena), root_idx));
+                    self.arena.borrow_mut()[root_idx as usize].left = node.idx;
                     Some(node)
+                } else {
+                    self.insert_from(left_idx, data)
                 }
-                Some(left) => self.insert_from(left, data),
-            },
-            Ordering::Greater => match root.right() {
-                None => {
-                    let mut node = Node::from(data);
-                    node.set_parent(root.duplicate());
-                    root.set_right(node.duplicate());
+            }
+            Ordering::Greater => {
+                let right_idx = self.arena.borrow()[root_idx as usize].right;
+                if right_idx == NULL {
+                    let mut node = self.alloc_node(data);
+                    node.set_parent(Node::new(Rc::clone(&self.arena), root_idx));
+                    self.arena.borrow_mut()[root_idx as usize].right = node.idx;
                     Some(node)
+                } else {
+                    self.insert_from(right_idx, data)
                 }
-                Some(right) => self.insert_from(right, data),
-            },
+            }
         }
     }
 
     fn rotate_right(&mut self, mut node: Node<T>) {
         let mut parent = node.left().expect("get parent node");
         node.set_left(parent.right());
-        if let Some(ref mut right) = parent.right() {
+        if let Some(mut right) = parent.right() {
             right.set_parent(node.duplicate());
         }
         parent.set_right(node.duplicate());
         parent.set_parent(node.parent());
-        if let Some(ref mut gparent) = parent.parent() {
+        if let Some(mut gparent) = parent.parent() {
             if node.is_left_child() {
                 gparent.set_left(parent.duplicate());
             } else {
                 gparent.set_right(parent.duplicate());
             }
         } else {
-            self.root = Some(parent.duplicate());
+            self.root = parent.idx;
         }
         node.set_parent(parent);
     }
@@ -147,19 +193,19 @@ impl<T: Ord> RBTreeSet<T> {
     fn rotate_left(&mut self, mut node: Node<T>) {
         let mut parent = node.right().expect("get parent node");
         node.set_right(parent.left());
-        if let Some(ref mut left) = parent.left() {
+        if let Some(mut left) = parent.left() {
             left.set_parent(node.duplicate());
         }
         parent.set_left(node.duplicate());
         parent.set_parent(node.parent());
-        if let Some(ref mut gparent) = parent.parent() {
+        if let Some(mut gparent) = parent.parent() {
             if node.is_left_child() {
                 gparent.set_left(parent.duplicate());
             } else {
                 gparent.set_right(parent.duplicate());
             }
         } else {
-            self.root = Some(parent.duplicate());
+            self.root = parent.idx;
         }
         node.set_parent(parent);
     }
@@ -227,12 +273,12 @@ impl<T: Ord> RBTreeSet<T> {
     /// assert_eq!(set.len(), 1);
     /// ```
     pub fn insert(&mut self, data: T) -> Option<Node<T>> {
-        let node = if let Some(ref root) = self.root {
-            let dup = root.duplicate();
-            self.insert_from(dup, data)
+        let node = if self.root == NULL {
+            let node = self.alloc_node(data);
+            self.root = node.idx;
+            Some(node)
         } else {
-            self.root = Some(Node::from(data));
-            Some(self.root.as_ref().unwrap().duplicate())
+            self.insert_from(self.root, data)
         };
         if let Some(ref n) = node {
             self.balance(n.duplicate());
@@ -276,7 +322,9 @@ impl<T: Ord> RBTreeSet<T> {
     /// assert!(v.is_empty());
     /// ```
     pub fn clear(&mut self) {
-        self.root = None;
+        self.arena = Rc::new(std::cell::RefCell::new(Vec::new()));
+        self.free.clear();
+        self.root = NULL;
         self.length = 0;
     }
 
@@ -296,14 +344,17 @@ impl<T: Ord> RBTreeSet<T> {
     /// assert_eq!(set.get_node(&4), None);
     /// ```
     pub fn get_node(&self, data: &T) -> Option<Node<T>> {
-        let mut tmp = self.root.as_ref().map(Node::duplicate);
-        while let Some(n) = tmp {
-            let ord = data.cmp(&*n.data());
-            tmp = match ord {
-                Ordering::Equal => return Some(n.duplicate()),
-                Ordering::Less => n.left(),
-                Ordering::Greater => n.right(),
+        let mut idx = self.root;
+        while idx != NULL {
+            let arena = self.arena.borrow();
+            let ord = data.cmp(arena[idx as usize].data.as_ref().unwrap());
+            let next = match ord {
+                Ordering::Equal => return Some(Node::new(Rc::clone(&self.arena), idx)),
+                Ordering::Less => arena[idx as usize].left,
+                Ordering::Greater => arena[idx as usize].right,
             };
+            drop(arena);
+            idx = next;
         }
         None
     }
@@ -318,16 +369,19 @@ impl<T: Ord> RBTreeSet<T> {
         } else if node.is_left_child() {
             node.parent()
         } else {
-            let mut tmp = node.duplicate();
-            while tmp.parent().as_ref().and_then(Node::right).as_ref() == Some(&tmp) {
-                tmp = tmp.parent().as_ref().unwrap().duplicate();
+            let mut tmp = node;
+            loop {
+                let parent = tmp.parent()?;
+                if parent.left().as_ref() == Some(&tmp) {
+                    return Some(parent);
+                }
+                tmp = parent;
             }
-            tmp.parent()
         }
     }
 
     fn double_black_fixup(&mut self, node: &Node<T>) {
-        if self.root.as_ref() == Some(node) {
+        if self.root == node.idx {
             return;
         }
 
@@ -407,16 +461,16 @@ impl<T: Ord> RBTreeSet<T> {
             && new_node.as_ref().map(Node::colour) != Some(Colour::Red);
 
         if new_node.is_none() {
-            if self.root.as_ref() == Some(node) {
-                self.root = None;
+            if self.root == node.idx {
+                self.root = NULL;
             } else {
                 if double_black {
-                    self.double_black_fixup(&node)
-                } else if let Some(ref mut sibling) = node.sibling() {
+                    self.double_black_fixup(node)
+                } else if let Some(mut sibling) = node.sibling() {
                     sibling.set_colour(Colour::Red);
                 }
 
-                if let Some(ref mut parent) = node.parent() {
+                if let Some(mut parent) = node.parent() {
                     if node.is_left_child() {
                         parent.set_left(None);
                     } else {
@@ -425,17 +479,19 @@ impl<T: Ord> RBTreeSet<T> {
                 }
             }
             self.length -= 1;
+            self.free_node(node.idx);
             return;
         }
 
         let mut substitute = new_node.unwrap();
 
         if node.left().is_none() || node.right().is_none() {
-            if self.root.as_ref() == Some(node) {
+            if self.root == node.idx {
                 node.swap_data(&mut substitute);
                 node.set_left(None);
                 node.set_right(None);
-            } else if let Some(ref mut parent) = node.parent() {
+                self.free_node(substitute.idx);
+            } else if let Some(mut parent) = node.parent() {
                 if node.is_left_child() {
                     parent.set_left(substitute.duplicate());
                 } else {
@@ -447,6 +503,7 @@ impl<T: Ord> RBTreeSet<T> {
                 } else {
                     substitute.set_colour(Colour::Black)
                 }
+                self.free_node(node.idx);
             }
             self.length -= 1;
             return;
@@ -469,7 +526,7 @@ impl<T: Ord> RBTreeSet<T> {
     /// assert_eq!(set.first(), None);
     /// ```
     pub fn first(&self) -> Option<Node<T>> {
-        let mut n = self.root.as_ref().map(Node::duplicate)?;
+        let mut n = self.node_opt(self.root)?;
         while let Some(left) = n.left() {
             n = left;
         }
@@ -489,7 +546,7 @@ impl<T: Ord> RBTreeSet<T> {
     /// assert_eq!(set.last(), None);
     /// ```
     pub fn last(&self) -> Option<Node<T>> {
-        let mut n = self.root.as_ref().map(Node::duplicate)?;
+        let mut n = self.node_opt(self.root)?;
         while let Some(right) = n.right() {
             n = right;
         }
@@ -537,16 +594,14 @@ impl<T: Ord> RBTreeSet<T> {
     ///
     /// let set: RBTreeSet<_> = [3, 1, 2].iter().cloned().collect();
     /// let mut set_iter = set.iter();
-    ///  
+    ///
     /// assert_eq!(*set_iter.next().unwrap().data(), 1);
     /// assert_eq!(*set_iter.next().unwrap().data(), 2);
     /// assert_eq!(*set_iter.next().unwrap().data(), 3);
     /// assert_eq!(set_iter.next(), None);
     /// ```
     pub fn iter(&self) -> Iter<T> {
-        Iter {
-            cursor: self.first(),
-        }
+        Iter { cursor: self.first() }
     }
 
     /// Gets an iterator that visits the nodes in the RBTreeSet in ascending order,
@@ -560,15 +615,13 @@ impl<T: Ord> RBTreeSet<T> {
     /// let set: RBTreeSet<_> = [3, 1, 2].iter().cloned().collect();
     /// let node = set.get_node(&2).unwrap();
     /// let mut set_iter = set.iter_from(&node);
-    ///  
+    ///
     /// assert_eq!(*set_iter.next().unwrap().data(), 2);
     /// assert_eq!(*set_iter.next().unwrap().data(), 3);
     /// assert_eq!(set_iter.next(), None);
     /// ```
     pub fn iter_from(&self, node: &Node<T>) -> Iter<T> {
-        Iter {
-            cursor: Some(node.duplicate()),
-        }
+        Iter { cursor: Some(node.duplicate()) }
     }
 
     /// Gets an iterator that visit the nodes values in the RBTreeSet in ascending order.
@@ -586,7 +639,7 @@ impl<T: Ord> RBTreeSet<T> {
     ///
     /// let set: RBTreeSet<_> = [3, 1, 2].iter().cloned().collect();
     /// let mut set_values = set.values();
-    ///  
+    ///
     /// assert_eq!(set_values.next(), Some(1));
     /// assert_eq!(set_values.next(), Some(2));
     /// assert_eq!(set_values.next(), Some(3));
@@ -616,7 +669,7 @@ impl<T: Ord> RBTreeSet<T> {
     /// let set: RBTreeSet<_> = [3, 1, 2].iter().cloned().collect();
     /// let node = set.get_node(&2).unwrap();
     /// let mut set_values = set.values_from(&node);
-    ///  
+    ///
     /// assert_eq!(set_values.next(), Some(2));
     /// assert_eq!(set_values.next(), Some(3));
     /// assert_eq!(set_values.next(), None);
@@ -625,9 +678,7 @@ impl<T: Ord> RBTreeSet<T> {
     where
         T: Clone,
     {
-        IterValues {
-            inner: self.iter_from(node),
-        }
+        IterValues { inner: self.iter_from(node) }
     }
 
     /// Optimize the set by merging nodes where applicable while keeping the ordering.
@@ -712,7 +763,7 @@ impl<T: Ord> RBTreeSet<T> {
                 }
             }
             if acc.len() > 1 {
-                let new_data = acc.iter().skip(1).fold(acc[0].clone(), |a, b| a.merged(&b));
+                let new_data = acc.iter().skip(1).fold(acc[0].clone(), |a, b| a.merged(b));
                 for data in &acc[0..acc.len() - 1] {
                     self.remove(data);
                 }
@@ -790,27 +841,20 @@ impl<T> fmt::Debug for RBTreeSet<T> {
     }
 }
 
-fn clone_subtree<T: Clone>(node: Option<Node<T>>) -> Option<Node<T>> {
-    let sub = node?;
-
-    let mut cloned = Node::from(sub.clone_data());
-    cloned.set_colour(sub.colour());
-    cloned.set_left(clone_subtree(sub.left()));
-    cloned.set_right(clone_subtree(sub.right()));
-    if let Some(ref mut left) = cloned.left() {
-        left.set_parent(cloned.duplicate());
-    }
-    if let Some(ref mut right) = cloned.right() {
-        right.set_parent(cloned.duplicate());
-    }
-    Some(cloned)
-}
-
 impl<T: Clone> Clone for RBTreeSet<T> {
     fn clone(&self) -> Self {
+        let arena_clone: Vec<NodeData<T>> = self.arena.borrow().iter().map(|nd| NodeData {
+            colour: nd.colour,
+            parent: nd.parent,
+            left: nd.left,
+            right: nd.right,
+            data: nd.data.clone(),
+        }).collect();
         RBTreeSet {
-            root: clone_subtree(self.root.as_ref().map(Node::duplicate)),
-            ..*self
+            arena: Rc::new(std::cell::RefCell::new(arena_clone)),
+            free: self.free.clone(),
+            root: self.root,
+            length: self.length,
         }
     }
 }
@@ -879,6 +923,10 @@ mod tests {
         };
     }
 
+    fn root_node<T: Ord>(tree: &RBTreeSet<T>) -> Option<Node<T>> {
+        tree.node_opt(tree.root)
+    }
+
     #[test]
     fn rotate_left_root() {
         let mut tree = RBTreeSet::new();
@@ -887,9 +935,9 @@ mod tests {
         tree.insert(15);
 
         print!("{}", tree.dump_tree_as_dot());
-        assert_node!(tree.root, 11, Colour::Black);
-        assert_node!(tree.root.as_ref().unwrap().left(), 2, Colour::Red);
-        assert_node!(tree.root.as_ref().unwrap().right(), 15, Colour::Red);
+        assert_node!(root_node(&tree), 11, Colour::Black);
+        assert_node!(root_node(&tree).as_ref().unwrap().left(), 2, Colour::Red);
+        assert_node!(root_node(&tree).as_ref().unwrap().right(), 15, Colour::Red);
     }
 
     #[test]
@@ -902,9 +950,9 @@ mod tests {
         tree.insert(15);
 
         print!("{}", tree.dump_tree_as_dot());
-        assert_node!(tree.root, 3, Colour::Black);
-        assert_node!(tree.root.as_ref().unwrap().left(), 2, Colour::Black);
-        assert_node!(tree.root.as_ref().unwrap().right(), 11, Colour::Black);
+        assert_node!(root_node(&tree), 3, Colour::Black);
+        assert_node!(root_node(&tree).as_ref().unwrap().left(), 2, Colour::Black);
+        assert_node!(root_node(&tree).as_ref().unwrap().right(), 11, Colour::Black);
     }
 
     #[test]
@@ -915,9 +963,9 @@ mod tests {
         tree.insert(2);
 
         print!("{}", tree.dump_tree_as_dot());
-        assert_node!(tree.root, 6, Colour::Black);
-        assert_node!(tree.root.as_ref().unwrap().left(), 2, Colour::Red);
-        assert_node!(tree.root.as_ref().unwrap().right(), 11, Colour::Red);
+        assert_node!(root_node(&tree), 6, Colour::Black);
+        assert_node!(root_node(&tree).as_ref().unwrap().left(), 2, Colour::Red);
+        assert_node!(root_node(&tree).as_ref().unwrap().right(), 11, Colour::Red);
     }
 
     #[test]
@@ -930,9 +978,9 @@ mod tests {
         tree.insert(2);
 
         print!("{}", tree.dump_tree_as_dot());
-        assert_node!(tree.root, 11, Colour::Black);
-        assert_node!(tree.root.as_ref().unwrap().left(), 3, Colour::Black);
-        assert_node!(tree.root.as_ref().unwrap().right(), 15, Colour::Black);
+        assert_node!(root_node(&tree), 11, Colour::Black);
+        assert_node!(root_node(&tree).as_ref().unwrap().left(), 3, Colour::Black);
+        assert_node!(root_node(&tree).as_ref().unwrap().right(), 15, Colour::Black);
     }
 
     #[derive(Debug)]
@@ -972,7 +1020,7 @@ mod tests {
     where
         T: Clone + fmt::Debug + Ord,
     {
-        if let Some(ref root) = tree.root {
+        if let Some(ref root) = root_node(tree) {
             if root.colour() == Colour::Red {
                 Err(InvalidReason::RootIsRed)
             } else {
